@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -24,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -153,5 +155,46 @@ class CitaReminderServiceImplTest {
 
         assertFalse(cita.isRecordatorioEnviado());
         verify(citaRepository, never()).save(any());
+    }
+
+    @Test
+    void enviarRecordatorioUrgente_citaExistente_usaCanalUrgenteInyectado() {
+        Cita cita = new Cita(5L, "Luis Peña", "3001234567",
+                LocalDateTime.of(2026, 8, 10, 10, 30), CanalNotificacion.SMS, false);
+        when(citaRepository.findById(5L)).thenReturn(Optional.of(cita));
+
+        citaReminderService.enviarRecordatorioUrgente(5L);
+
+        verify(canalUrgenteMock, times(1)).enviar(eq(cita), contains("URGENTE"));
+        verify(citaRepository).save(cita);
+        assertTrue(cita.isRecordatorioEnviado());
+    }
+
+    @Test
+    void enviarRecordatorioUrgente_gatewayFalla_noMarcaComoEnviado() {
+        // Imposible de escribir antes del refactor: el canal se construía con
+        // new dentro del método y no había dónde simular el fallo del gateway.
+        Cita cita = new Cita(6L, "Marta Ruiz", "3009876543",
+                LocalDateTime.of(2026, 8, 10, 10, 30), CanalNotificacion.SMS, false);
+        when(citaRepository.findById(6L)).thenReturn(Optional.of(cita));
+        doThrow(new RuntimeException("Gateway de SMS no disponible"))
+                .when(canalUrgenteMock).enviar(any(), anyString());
+
+        assertThrows(RuntimeException.class,
+                () -> citaReminderService.enviarRecordatorioUrgente(6L));
+
+        assertFalse(cita.isRecordatorioEnviado());
+        verify(citaRepository, never()).save(any());
+    }
+
+    @Test
+    void enviarRecordatorioUrgente_citaInexistente_lanzaCitaNoEncontradaException() {
+        when(citaRepository.findById(99L)).thenReturn(Optional.empty());
+
+        CitaNoEncontradaException ex = assertThrows(CitaNoEncontradaException.class,
+                () -> citaReminderService.enviarRecordatorioUrgente(99L));
+
+        assertEquals("Cita no encontrada: 99", ex.getMessage());
+        verifyNoInteractions(canalUrgenteMock);
     }
 }
